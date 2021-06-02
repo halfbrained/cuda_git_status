@@ -28,9 +28,11 @@ class GitManager:
                 my_env["PATH"] = "/usr/local/bin:/usr/bin:" + my_env["PATH"]
                 p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                      cwd=cwd, env=my_env)
-            p.wait()
+            #p.wait()
+            while p.poll() is None:
+                yield None
             stdoutdata, _ = p.communicate()
-            return stdoutdata.decode('utf-8')
+            yield stdoutdata.decode('utf-8')
 
     def getcwd(self):
         f = self.filename
@@ -40,31 +42,43 @@ class GitManager:
         return cwd
 
     def branch(self):
-        ret = self.run_git(["symbolic-ref", "HEAD", "--short"])
+        for ret in self.run_git(["symbolic-ref", "HEAD", "--short"]): # wait for result
+            if ret is None:
+                yield None
+
         if ret:
             ret = ret.strip()
         else:
-            output = self.run_git("branch")
+            for output in self.run_git("branch"): # wait for result
+                if output is None:
+                    yield None
+
             if output:
                 m = re.search(r"\* *\(detached from (.*?)\)", output, flags=re.MULTILINE)
                 if m:
                     ret = m.group(1)
-        return ret
+        yield ret
 
     def is_dirty(self):
-        output = self.run_git("status")
+        for output in self.run_git("status"): # wait for result
+            if output is None:
+                yield None
+
         if not output:
-            return False
+            yield False
         ret = re.search(r"working (tree|directory) clean", output)
         if ret:
-            return False
+            yield False
         else:
-            return True
+            yield True
 
     def unpushed_info(self, branch):
         a, b = 0, 0
         if branch:
-            output = self.run_git(["branch", "-v"])
+            for output in self.run_git(["branch", "-v"]): # wait for result
+                if output is None:
+                    yield None
+
             if output:
                 m = re.search(r"\* .*?\[behind ([0-9])+\]", output, flags=re.MULTILINE)
                 if m:
@@ -72,23 +86,41 @@ class GitManager:
                 m = re.search(r"\* .*?\[ahead ([0-9])+\]", output, flags=re.MULTILINE)
                 if m:
                     b = int(m.group(1))
-        return (a, b)
+        yield (a, b)
 
     def badge(self, filename):
+        """ "coroutine" - call next() with result until received not None
+        """
+
         self.filename = filename
         if not self.filename:
-            return ""
+            yield ""
 
-        branch = self.branch()
+        branch = None
+        for branch in self.branch(): # wait for result
+            if branch is None:
+                yield None
+
         if not branch:
-            return ""
+            yield ""
+
         ret = branch
-        if self.is_dirty():
+        for is_dirty in self.is_dirty(): # wait for result
+            if is_dirty is None:
+                yield None
+
+        if is_dirty:
             ret = ret + "*"
-        a, b = self.unpushed_info(branch)
+
+        for unpushed_info in self.unpushed_info(branch): # wait for result
+            if unpushed_info is None:
+                yield None
+
+        a, b = unpushed_info
         if a:
             ret = ret + "-%d" % a
         if b:
             ret = ret + "+%d" % b
-        return self.prefix + ret
+
+        yield self.prefix + ret
 

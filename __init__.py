@@ -1,6 +1,9 @@
 import os
+from time import time
 from cudatext import *
 from .git_manager import GitManager
+
+GIT_TIMEOUT = 5
 
 CELL_TAG_INFO = 20 #CudaText built-in value for last statusbar cell
 CELL_TAG = 100 #uniq value for all plugins adding cells via statusbar_proc()
@@ -12,6 +15,9 @@ gitmanager = GitManager()
 
 class Command:
     def __init__(self):
+
+        self.is_loading_sesh = False # to ignore 'on_open()' while loading session
+        self.badge_getters = []
 
         self.load_ops()
 
@@ -53,25 +59,67 @@ class Command:
         if os.path.isfile(fn_config):
             file_open(fn_config)
 
-    def update(self):
+    def request_update(self, ed_self):
 
-        text = gitmanager.badge(ed.get_filename())
-        statusbar_proc('main', STATUSBAR_SET_CELL_TEXT, tag=CELL_TAG, value=text)
+        if self.is_loading_sesh:
+            return
+
+        filename = (ed_self or ed).get_filename()
+
+        print(f'NOTE: starting badge getter: {filename}')
+
+        badge_getter = gitmanager.badge(filename)
+        self.badge_getters.append((time(), badge_getter))
+
+        timer_proc(TIMER_START, self.on_timer, 50)
+
+    def on_timer(self, tag='', info=''):
+
+        if self.badge_getters:
+            start_time, badge_getter = self.badge_getters[0]
+            if time() - start_time > GIT_TIMEOUT:
+                print(' --  badge timeout: {time()-start_time:.3f}')
+                del self.badge_getters[0]
+            else:
+                badge = next(badge_getter)
+                if badge is not None:
+                    self.update(badge)
+                    del self.badge_getters[0]
+                    print(f' ... badge done: {time()-start_time:.3f}')
+                else:
+                    print(f' ... badge None, waiting: {time()-start_time:.3f}')
+                    return
+
+        if not self.badge_getters:
+            timer_proc(TIMER_STOP, self.on_timer, 0)
+
+    def update(self, badge):
+        print(f'SET badge: {badge}')
+
+        statusbar_proc('main', STATUSBAR_SET_CELL_TEXT, tag=CELL_TAG, value=badge)
 
         #show icon?
-        icon = self.icon_index if text else -1
+        icon = self.icon_index if badge else -1
         statusbar_proc('main', STATUSBAR_SET_CELL_IMAGEINDEX, tag=CELL_TAG, value=icon)
 
         #show panel?
-        size = self.cell_width if text else 0
+        size = self.cell_width if badge else 0
         statusbar_proc('main', STATUSBAR_SET_CELL_SIZE, tag=CELL_TAG, value=size)
 
 
     def on_tab_change(self, ed_self):
-        self.update()
+        self.request_update(ed_self)
 
     def on_open(self, ed_self):
-        self.update()
+        self.request_update(ed_self)
 
     def on_save(self, ed_self):
-        self.update()
+        self.request_update(ed_self)
+
+    def on_state(self, ed_self, state):
+        if state == APPSTATE_SESSION_LOAD_BEGIN: # started
+            self.is_loading_sesh = True
+
+        elif state in [APPSTATE_SESSION_LOAD_FAIL, APPSTATE_SESSION_LOAD]: # ended
+            self.is_loading_sesh = False
+            self.request_update(ed)
