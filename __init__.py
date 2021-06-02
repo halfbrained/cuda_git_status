@@ -66,8 +66,6 @@ class Command:
 
         filename = (ed_self or ed).get_filename()
 
-        print(f'NOTE: starting badge getter: {filename}')
-
         badge_getter = gitmanager.badge(filename)
         self.badge_getters.append((time(), badge_getter))
 
@@ -78,23 +76,19 @@ class Command:
         if self.badge_getters:
             start_time, badge_getter = self.badge_getters[0]
             if time() - start_time > GIT_TIMEOUT:
-                print(' --  badge timeout: {time()-start_time:.3f}')
                 del self.badge_getters[0]
             else:
                 badge = next(badge_getter)
                 if badge is not None:
                     self.update(badge)
                     del self.badge_getters[0]
-                    print(f' ... badge done: {time()-start_time:.3f}')
                 else:
-                    print(f' ... badge None, waiting: {time()-start_time:.3f}')
                     return
 
         if not self.badge_getters:
             timer_proc(TIMER_STOP, self.on_timer, 0)
 
     def update(self, badge):
-        print(f'SET badge: {badge}')
 
         statusbar_proc('main', STATUSBAR_SET_CELL_TEXT, tag=CELL_TAG, value=badge)
 
